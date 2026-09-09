@@ -6,13 +6,34 @@ import kotlin.math.abs
 data class RiskResult(
     val score: Float,
     val level: String,
-    val secondaryDetected: Boolean
+    val secondaryDetected: Boolean,
+
+    // Individual risk signals
+    val presenceScore: Float,
+    val proximityScore: Float,
+    val poseScore: Float,
+    val persistenceScore: Float
 )
 
 class RiskEngine {
 
+    // Number of consecutive frames in which a secondary
+    // person has been detected.
     private var secondaryFrames = 0
 
+    // Number of frames without a secondary person.
+    private var noSecondaryFrames = 0
+
+    /**
+     * Calculate the current privacy risk.
+     *
+     * Signals:
+     * 1. Presence    - Is another person detected?
+     * 2. Proximity   - How large is the secondary face compared
+     *                  with the primary face?
+     * 3. Pose        - Is the secondary person facing the screen?
+     * 4. Persistence - Has the secondary person remained present?
+     */
     fun calculateRisk(
         faces: List<Rect>,
         primaryIndex: Int,
@@ -21,20 +42,42 @@ class RiskEngine {
         secondaryFacingScreen: Boolean
     ): RiskResult {
 
-        // No secondary person.
-        if (faces.size <= 1 || primaryIndex < 0) {
+        // ---------------------------------------------------------
+        // NO PRIMARY FACE / NO SECONDARY PERSON
+        // ---------------------------------------------------------
 
-            secondaryFrames = 0
+        if (
+            faces.size <= 1 ||
+            primaryIndex < 0 ||
+            primaryIndex >= faces.size
+        ) {
+
+            noSecondaryFrames++
+
+            // Slowly forget previous detection.
+            if (noSecondaryFrames >= 10) {
+                secondaryFrames = 0
+            }
 
             return RiskResult(
                 score = 0f,
                 level = "LOW",
-                secondaryDetected = false
+                secondaryDetected = false,
+                presenceScore = 0f,
+                proximityScore = 0f,
+                poseScore = 0f,
+                persistenceScore =
+                    (secondaryFrames / 30f)
+                        .coerceIn(0f, 1f)
             )
         }
 
-        // A secondary person exists.
+        // ---------------------------------------------------------
+        // SECONDARY PERSON DETECTED
+        // ---------------------------------------------------------
+
         secondaryFrames++
+        noSecondaryFrames = 0
 
         val secondaryFaces =
             faces.filterIndexed { index, _ ->
@@ -42,48 +85,87 @@ class RiskEngine {
             }
 
         if (secondaryFaces.isEmpty()) {
+
             return RiskResult(
                 score = 0f,
                 level = "LOW",
-                secondaryDetected = false
+                secondaryDetected = false,
+                presenceScore = 0f,
+                proximityScore = 0f,
+                poseScore = 0f,
+                persistenceScore =
+                    (secondaryFrames / 30f)
+                        .coerceIn(0f, 1f)
             )
         }
 
-        /*
-         * 1. PRESENCE
-         *
-         * Another person is visible.
-         */
+        // ---------------------------------------------------------
+        // SIGNAL 1: PRESENCE
+        // ---------------------------------------------------------
+
         val presenceScore = 1f
 
-        /*
-         * 2. PROXIMITY
-         *
-         * Larger secondary face =
-         * person is probably closer.
-         */
+        // ---------------------------------------------------------
+        // SIGNAL 2: PROXIMITY
+        // ---------------------------------------------------------
+
         val primaryFace = faces[primaryIndex]
 
         val primaryArea =
             primaryFace.width().toFloat() *
                     primaryFace.height().toFloat()
 
+        if (primaryArea <= 0f) {
+
+            return RiskResult(
+                score = 0f,
+                level = "LOW",
+                secondaryDetected = true,
+                presenceScore = presenceScore,
+                proximityScore = 0f,
+                poseScore = 0f,
+                persistenceScore =
+                    (secondaryFrames / 30f)
+                        .coerceIn(0f, 1f)
+            )
+        }
+
         val largestSecondaryArea =
             secondaryFaces.maxOf { face ->
+
                 face.width().toFloat() *
                         face.height().toFloat()
             }
 
+        /*
+         * A larger secondary face usually means the person
+         * is closer to the phone.
+         *
+         * Example:
+         *
+         * Secondary face = 50% of primary face
+         * proximityScore = 0.5
+         *
+         * Secondary face >= primary face
+         * proximityScore = 1.0
+         */
         val proximityScore =
-            (largestSecondaryArea / primaryArea)
+            (
+                    largestSecondaryArea /
+                            primaryArea
+                    )
                 .coerceIn(0f, 1f)
 
+        // ---------------------------------------------------------
+        // SIGNAL 3: HEAD POSE
+        // ---------------------------------------------------------
+
         /*
-         * 3. HEAD POSE
+         * ML Kit tells us whether the secondary face is
+         * approximately facing the screen.
          *
-         * For the MVP, head orientation is used
-         * as an approximation for attention toward
-         * the screen.
+         * Unlike the old implementation, we DON'T count
+         * head pose twice as both pose and gaze.
          */
         val poseScore =
             if (secondaryFacingScreen) {
@@ -92,33 +174,44 @@ class RiskEngine {
                 0f
             }
 
-        /*
-         * 4. GAZE PROXY
-         *
-         * We don't have eye-gaze detection yet.
-         * Head orientation acts as the gaze proxy.
-         */
-        val gazeScore = poseScore
+        // ---------------------------------------------------------
+        // SIGNAL 4: PERSISTENCE
+        // ---------------------------------------------------------
 
         /*
-         * 5. PERSISTENCE
+         * Gradually increase the persistence contribution.
          *
-         * Risk increases when the secondary
-         * person remains visible.
+         * 1 frame  -> ~0.03
+         * 15 frames -> 0.50
+         * 30+ frames -> 1.00
          */
         val persistenceScore =
             (secondaryFrames / 30f)
                 .coerceIn(0f, 1f)
 
+        // ---------------------------------------------------------
+        // FINAL RISK SCORE
+        // ---------------------------------------------------------
+
         /*
-         * Multi-signal risk score.
+         * Weights:
+         *
+         * Presence    = 20%
+         * Proximity   = 30%
+         * Pose        = 35%
+         * Persistence = 15%
+         *
+         * Pose and proximity are the strongest indicators.
          */
         val score =
-            0.15f * presenceScore +
-                    0.25f * proximityScore +
-                    0.30f * poseScore +
-                    0.15f * gazeScore +
+            0.20f * presenceScore +
+                    0.30f * proximityScore +
+                    0.35f * poseScore +
                     0.15f * persistenceScore
+
+        // ---------------------------------------------------------
+        // RISK LEVEL
+        // ---------------------------------------------------------
 
         val level =
             when {
@@ -130,7 +223,21 @@ class RiskEngine {
         return RiskResult(
             score = score,
             level = level,
-            secondaryDetected = true
+            secondaryDetected = true,
+            presenceScore = presenceScore,
+            proximityScore = proximityScore,
+            poseScore = poseScore,
+            persistenceScore = persistenceScore
         )
+    }
+
+    /**
+     * Reset the engine.
+     *
+     * Useful when the camera is stopped/restarted.
+     */
+    fun reset() {
+        secondaryFrames = 0
+        noSecondaryFrames = 0
     }
 }

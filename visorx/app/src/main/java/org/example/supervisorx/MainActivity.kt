@@ -4,7 +4,9 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Rect
 import android.os.Bundle
+import android.view.View
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
@@ -18,8 +20,6 @@ import androidx.core.content.ContextCompat
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetectorOptions
-import com.google.mlkit.vision.face.Face
-
 import kotlin.math.abs
 import kotlin.math.sqrt
 
@@ -27,20 +27,58 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var previewView: PreviewView
     private lateinit var faceOverlay: FaceOverlayView
+
     private lateinit var faceCountText: TextView
     private lateinit var poseText: TextView
     private lateinit var riskText: TextView
+
+    private lateinit var riskIndicator: RiskIndicatorView
+
     private lateinit var privacyShield: PrivacyShieldView
 
-    // Risk engine
-    private val riskEngine = RiskEngine()
+    // ----------------------------------------------------
+    // RISK ENGINE
+    // ----------------------------------------------------
 
-    // Tracking state
-    private var previousPrimaryRect: Rect? = null
-    private var primaryCandidateIndex = -1
-    private var primaryCandidateFrames = 0
+    private val riskEngine =
+        RiskEngine()
 
-    // Camera permission
+    // ----------------------------------------------------
+    // PRIMARY FACE TRACKING
+    // ----------------------------------------------------
+
+    private var previousPrimaryRect: Rect? =
+        null
+
+    private var primaryCandidateIndex =
+        -1
+
+    private var primaryCandidateFrames =
+        0
+
+    // ----------------------------------------------------
+    // PRIVACY SHIELD
+    // ----------------------------------------------------
+
+    private var shieldActive =
+        false
+
+    private var highRiskStartTime =
+        0L
+
+    private var lowRiskStartTime =
+        0L
+
+    private val highRiskDelay =
+        500L
+
+    private val recoveryDelay =
+        800L
+
+    // ----------------------------------------------------
+    // CAMERA PERMISSION
+    // ----------------------------------------------------
+
     private val requestPermission =
         registerForActivityResult(
             ActivityResultContracts.RequestPermission()
@@ -51,20 +89,34 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-    // ML Kit face detector
+    // ----------------------------------------------------
+    // ML KIT FACE DETECTOR
+    // ----------------------------------------------------
+
     private val detector by lazy {
 
-        val options = FaceDetectorOptions.Builder()
-            .setPerformanceMode(
-                FaceDetectorOptions.PERFORMANCE_MODE_FAST
-            )
-            .setMinFaceSize(0.15f)
-            .build()
+        val options =
+            FaceDetectorOptions.Builder()
+
+                .setPerformanceMode(
+                    FaceDetectorOptions.PERFORMANCE_MODE_FAST
+                )
+
+                .setMinFaceSize(0.15f)
+
+                .build()
 
         FaceDetection.getClient(options)
     }
 
-    override fun onCreate(savedInstanceState: Bundle?) {
+    // ----------------------------------------------------
+    // ACTIVITY
+    // ----------------------------------------------------
+
+    override fun onCreate(
+        savedInstanceState: Bundle?
+    ) {
+
         super.onCreate(savedInstanceState)
 
         createUI()
@@ -87,122 +139,232 @@ class MainActivity : ComponentActivity() {
     }
 
     // ----------------------------------------------------
-    // UI
+    // CREATE UI
     // ----------------------------------------------------
 
     private fun createUI() {
 
-        previewView = PreviewView(this)
+        // ------------------------------------------------
+        // CAMERA PREVIEW
+        // ------------------------------------------------
 
-        faceOverlay = FaceOverlayView(this)
-        privacyShield = PrivacyShieldView(this).apply {
-            visibility = android.view.View.GONE
-        }
+        previewView =
+            PreviewView(this).apply {
 
-        faceCountText = TextView(this).apply {
+                scaleType =
+                    PreviewView.ScaleType.FILL_CENTER
+            }
 
-            text = "Faces: 0"
-            textSize = 20f
+        // ------------------------------------------------
+        // FACE OVERLAY
+        // ------------------------------------------------
 
-            setPadding(
-                30,
-                30,
-                30,
-                30
-            )
-        }
+        faceOverlay =
+            FaceOverlayView(this)
 
-        poseText = TextView(this).apply {
+        // ------------------------------------------------
+        // PRIVACY SHIELD
+        // ------------------------------------------------
 
-            text = "Pose: Waiting"
-            textSize = 18f
+        privacyShield =
+            PrivacyShieldView(this).apply {
 
-            setPadding(
-                30,
-                30,
-                30,
-                30
-            )
-        }
+                visibility =
+                    View.GONE
+            }
 
-        riskText = TextView(this).apply {
+        // ------------------------------------------------
+        // FACE COUNT
+        // ------------------------------------------------
 
-            text = "Risk: LOW"
-            textSize = 20f
+        faceCountText =
+            TextView(this).apply {
 
-            setPadding(
-                30,
-                30,
-                30,
-                30
-            )
-        }
+                text =
+                    "Faces: 0"
 
-        val root = FrameLayout(this)
+                textSize =
+                    18f
 
-        // Camera preview
-        val faceCountParams = FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            FrameLayout.LayoutParams.WRAP_CONTENT
-        )
+                setPadding(
+                    20,
+                    10,
+                    20,
+                    5
+                )
+            }
 
-        faceCountParams.leftMargin = 30
-        faceCountParams.topMargin = 30
+        // ------------------------------------------------
+        // POSE
+        // ------------------------------------------------
+
+        poseText =
+            TextView(this).apply {
+
+                text =
+                    "Pose: Waiting"
+
+                textSize =
+                    16f
+
+                setPadding(
+                    20,
+                    5,
+                    20,
+                    5
+                )
+            }
+
+        // ------------------------------------------------
+        // RISK TEXT
+        // ------------------------------------------------
+
+        riskText =
+            TextView(this).apply {
+
+                text =
+                    "Risk: LOW"
+
+                textSize =
+                    18f
+
+                setPadding(
+                    20,
+                    5,
+                    20,
+                    10
+                )
+            }
+
+        // ------------------------------------------------
+        // RISK INDICATOR
+        // ------------------------------------------------
+
+        riskIndicator =
+            RiskIndicatorView(this)
+
+        // ------------------------------------------------
+        // STATUS PANEL
+        // ------------------------------------------------
+
+        val statusPanel =
+            LinearLayout(this).apply {
+
+                orientation =
+                    LinearLayout.VERTICAL
+
+                addView(
+                    faceCountText
+                )
+
+                addView(
+                    poseText
+                )
+
+                addView(
+                    riskText
+                )
+            }
+
+        // ------------------------------------------------
+        // ROOT LAYOUT
+        // ------------------------------------------------
+
+        val root =
+            FrameLayout(this)
+
+        // ------------------------------------------------
+        // CAMERA
+        // ------------------------------------------------
 
         root.addView(
-            faceCountText,
-            faceCountParams
-        )
 
-        // Face boxes
-        val poseParams = FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            FrameLayout.LayoutParams.WRAP_CONTENT
-        )
+            previewView,
 
-        poseParams.leftMargin = 30
-        poseParams.topMargin = 90
-
-        root.addView(
-            poseText,
-            poseParams
-        )
-
-        // Face count
-        val riskParams = FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            FrameLayout.LayoutParams.WRAP_CONTENT
-        )
-
-        riskParams.leftMargin = 30
-        riskParams.topMargin = 180
-
-        root.addView(
-            riskText,
-            riskParams
-        )
-
-
-        // Head pose
-        root.addView(
-            poseText,
             FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        // ------------------------------------------------
+        // FACE OVERLAY
+        // ------------------------------------------------
+
+        root.addView(
+
+            faceOverlay,
+
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        // ------------------------------------------------
+        // STATUS PANEL POSITION
+        // ------------------------------------------------
+
+        val statusParams =
+            FrameLayout.LayoutParams(
+
                 FrameLayout.LayoutParams.WRAP_CONTENT,
+
                 FrameLayout.LayoutParams.WRAP_CONTENT
             )
+
+        statusParams.leftMargin =
+            15
+
+        statusParams.topMargin =
+            15
+
+        root.addView(
+
+            statusPanel,
+
+            statusParams
         )
 
-        // Risk
-        root.addView(
-            riskText,
+        // ------------------------------------------------
+        // RISK INDICATOR POSITION
+        // ------------------------------------------------
+
+        val riskIndicatorParams =
             FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT
+
+                FrameLayout.LayoutParams.MATCH_PARENT,
+
+                120
             )
-        )
+
+        riskIndicatorParams.leftMargin =
+            0
+
+        riskIndicatorParams.rightMargin =
+            0
+
+        riskIndicatorParams.topMargin =
+            270
 
         root.addView(
+
+            riskIndicator,
+
+            riskIndicatorParams
+        )
+
+        // ------------------------------------------------
+        // PRIVACY SHIELD
+        //
+        // MUST BE LAST.
+        // This puts it above everything.
+        // ------------------------------------------------
+
+        root.addView(
+
             privacyShield,
+
             FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -213,7 +375,7 @@ class MainActivity : ComponentActivity() {
     }
 
     // ----------------------------------------------------
-    // CAMERA
+    // START CAMERA
     // ----------------------------------------------------
 
     private fun startCamera() {
@@ -226,7 +388,10 @@ class MainActivity : ComponentActivity() {
             val cameraProvider =
                 cameraProviderFuture.get()
 
-            // Camera preview
+            // ------------------------------------------------
+            // PREVIEW
+            // ------------------------------------------------
+
             val preview =
                 Preview.Builder()
                     .build()
@@ -235,31 +400,47 @@ class MainActivity : ComponentActivity() {
                 previewView.surfaceProvider
             )
 
-            // Image analysis
+            // ------------------------------------------------
+            // IMAGE ANALYSIS
+            // ------------------------------------------------
+
             val imageAnalysis =
                 ImageAnalysis.Builder()
+
                     .setBackpressureStrategy(
                         ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST
                     )
+
                     .build()
 
             imageAnalysis.setAnalyzer(
+
                 ContextCompat.getMainExecutor(this)
+
             ) { imageProxy ->
 
-                analyzeImage(imageProxy)
+                analyzeImage(
+                    imageProxy
+                )
             }
 
-            // Front camera
+            // ------------------------------------------------
+            // FRONT CAMERA
+            // ------------------------------------------------
+
             val cameraSelector =
                 CameraSelector.DEFAULT_FRONT_CAMERA
 
             cameraProvider.unbindAll()
 
             cameraProvider.bindToLifecycle(
+
                 this,
+
                 cameraSelector,
+
                 preview,
+
                 imageAnalysis
             )
 
@@ -267,7 +448,7 @@ class MainActivity : ComponentActivity() {
     }
 
     // ----------------------------------------------------
-    // FACE ANALYSIS
+    // ANALYZE CAMERA FRAME
     // ----------------------------------------------------
 
     private fun analyzeImage(
@@ -280,34 +461,80 @@ class MainActivity : ComponentActivity() {
         if (mediaImage == null) {
 
             imageProxy.close()
+
             return
         }
 
+        val rotation =
+            imageProxy.imageInfo.rotationDegrees
+
         val image =
             InputImage.fromMediaImage(
+
                 mediaImage,
-                imageProxy.imageInfo.rotationDegrees
+
+                rotation
             )
 
         detector.process(image)
 
             .addOnSuccessListener { faces ->
 
-                // Get face rectangles
-                val rectangles =
-                    faces.map { it.boundingBox }
+                // ------------------------------------------------
+                // FACE RECTANGLES
+                // ------------------------------------------------
 
-                // Find primary person
+                val rectangles =
+                    faces.map {
+
+                        it.boundingBox
+                    }
+
+                // ------------------------------------------------
+                // ROTATED IMAGE DIMENSIONS
+                // ------------------------------------------------
+
+                val rotatedWidth: Int
+
+                val rotatedHeight: Int
+
+                if (
+                    rotation == 90 ||
+                    rotation == 270
+                ) {
+
+                    rotatedWidth =
+                        mediaImage.height
+
+                    rotatedHeight =
+                        mediaImage.width
+
+                } else {
+
+                    rotatedWidth =
+                        mediaImage.width
+
+                    rotatedHeight =
+                        mediaImage.height
+                }
+
+                // ------------------------------------------------
+                // PRIMARY FACE
+                // ------------------------------------------------
+
                 val primaryIndex =
                     findPrimaryFace(
+
                         rectangles,
-                        mediaImage.width,
-                        mediaImage.height
+
+                        rotatedWidth,
+
+                        rotatedHeight
                     )
 
-                // ----------------------------------------
+                // ------------------------------------------------
                 // PRIMARY HEAD POSE
-                // ----------------------------------------
+                // ------------------------------------------------
 
                 var poseMessage =
                     "Pose: No primary face"
@@ -331,12 +558,15 @@ class MainActivity : ComponentActivity() {
                                 abs(pitch) <= 25f
 
                     poseMessage =
+
                         if (facingScreen) {
 
                             "Pose: FACING SCREEN\n" +
                                     "Yaw: %.1f°  Pitch: %.1f°"
                                         .format(
+
                                             yaw,
+
                                             pitch
                                         )
 
@@ -345,23 +575,26 @@ class MainActivity : ComponentActivity() {
                             "Pose: LOOKING AWAY\n" +
                                     "Yaw: %.1f°  Pitch: %.1f°"
                                         .format(
+
                                             yaw,
+
                                             pitch
                                         )
                         }
                 }
 
-                // ----------------------------------------
-                // SECONDARY HEAD POSE
-                // ----------------------------------------
+                // ------------------------------------------------
+                // SECONDARY POSE
+                // ------------------------------------------------
 
                 var secondaryFacingScreen =
                     false
 
                 faces.forEachIndexed { index, face ->
 
-                    // Ignore primary person
-                    if (index != primaryIndex) {
+                    if (
+                        index != primaryIndex
+                    ) {
 
                         val yaw =
                             face.headEulerAngleY
@@ -374,36 +607,39 @@ class MainActivity : ComponentActivity() {
                                     abs(pitch) <= 25f
 
                         if (facing) {
-                            secondaryFacingScreen = true
+
+                            secondaryFacingScreen =
+                                true
                         }
                     }
                 }
 
-                // ----------------------------------------
+                // ------------------------------------------------
                 // RISK ENGINE
-                // ----------------------------------------
+                // ------------------------------------------------
 
                 val riskResult =
                     riskEngine.calculateRisk(
 
-                        faces = rectangles,
+                        faces =
+                            rectangles,
 
                         primaryIndex =
                             primaryIndex,
 
                         imageWidth =
-                            mediaImage.width,
+                            rotatedWidth,
 
                         imageHeight =
-                            mediaImage.height,
+                            rotatedHeight,
 
                         secondaryFacingScreen =
                             secondaryFacingScreen
                     )
 
-                // ----------------------------------------
+                // ------------------------------------------------
                 // UPDATE UI
-                // ----------------------------------------
+                // ------------------------------------------------
 
                 runOnUiThread {
 
@@ -417,22 +653,164 @@ class MainActivity : ComponentActivity() {
                         "Risk: ${riskResult.level} " +
                                 "(${(riskResult.score * 100).toInt()}%)"
 
+                    // ------------------------------------------------
+                    // RISK INDICATOR
+                    // ------------------------------------------------
+
+                    riskIndicator.updateRisk(
+
+                        riskResult.score,
+
+                        riskResult.level
+                    )
+
+                    // ------------------------------------------------
+                    // PRIVACY SHIELD
+                    // ------------------------------------------------
+
+                    updatePrivacyShield(
+
+                        riskResult.level
+                    )
+
+                    // ------------------------------------------------
+                    // FACE OVERLAY
+                    // ------------------------------------------------
+
                     faceOverlay.updateFaces(
-                        rectangles,
-                        primaryIndex
+
+                        newFaces =
+                            rectangles,
+
+                        newPrimaryIndex =
+                            primaryIndex,
+
+                        sourceWidth =
+                            mediaImage.width,
+
+                        sourceHeight =
+                            mediaImage.height,
+
+                        rotation =
+                            rotation,
+
+                        shouldMirror =
+                            true
                     )
                 }
             }
 
             .addOnFailureListener {
+
                 // Ignore individual frame failures.
             }
 
             .addOnCompleteListener {
 
-                // VERY IMPORTANT:
+                // IMPORTANT:
                 // Always close ImageProxy.
                 imageProxy.close()
+            }
+    }
+
+    // ----------------------------------------------------
+    // PRIVACY SHIELD
+    // ----------------------------------------------------
+
+    private fun updatePrivacyShield(
+        riskLevel: String
+    ) {
+
+        val currentTime =
+            System.currentTimeMillis()
+
+        // ------------------------------------------------
+        // HIGH RISK
+        // ------------------------------------------------
+
+        if (
+            riskLevel == "HIGH"
+        ) {
+
+            lowRiskStartTime =
+                0L
+
+            if (
+                highRiskStartTime == 0L
+            ) {
+
+                highRiskStartTime =
+                    currentTime
+            }
+
+            val highRiskDuration =
+                currentTime -
+                        highRiskStartTime
+
+            if (
+                highRiskDuration >=
+                highRiskDelay
+            ) {
+
+                shieldActive =
+                    true
+            }
+
+        } else {
+
+            // ------------------------------------------------
+            // LOW / MEDIUM
+            // ------------------------------------------------
+
+            highRiskStartTime =
+                0L
+
+            if (shieldActive) {
+
+                if (
+                    lowRiskStartTime == 0L
+                ) {
+
+                    lowRiskStartTime =
+                        currentTime
+                }
+
+                val lowRiskDuration =
+                    currentTime -
+                            lowRiskStartTime
+
+                if (
+                    lowRiskDuration >=
+                    recoveryDelay
+                ) {
+
+                    shieldActive =
+                        false
+
+                    lowRiskStartTime =
+                        0L
+                }
+
+            } else {
+
+                lowRiskStartTime =
+                    0L
+            }
+        }
+
+        // ------------------------------------------------
+        // SHIELD VISIBILITY
+        // ------------------------------------------------
+
+        privacyShield.visibility =
+
+            if (shieldActive) {
+
+                View.VISIBLE
+
+            } else {
+
+                View.GONE
             }
     }
 
@@ -441,27 +819,48 @@ class MainActivity : ComponentActivity() {
     // ----------------------------------------------------
 
     private fun findPrimaryFace(
+
         faces: List<Rect>,
+
         imageWidth: Int,
+
         imageHeight: Int
+
     ): Int {
+
+        // ------------------------------------------------
+        // NO FACES
+        // ------------------------------------------------
 
         if (faces.isEmpty()) {
 
-            primaryCandidateIndex = -1
-            primaryCandidateFrames = 0
-            previousPrimaryRect = null
+            primaryCandidateIndex =
+                -1
+
+            primaryCandidateFrames =
+                0
+
+            previousPrimaryRect =
+                null
 
             return -1
         }
 
-        // No primary yet
-        if (previousPrimaryRect == null) {
+        // ------------------------------------------------
+        // FIRST PRIMARY
+        // ------------------------------------------------
+
+        if (
+            previousPrimaryRect == null
+        ) {
 
             val index =
                 calculateBestPrimary(
+
                     faces,
+
                     imageWidth,
+
                     imageHeight
                 )
 
@@ -474,34 +873,52 @@ class MainActivity : ComponentActivity() {
         val previousRect =
             previousPrimaryRect!!
 
-        var bestTrackingIndex = -1
-        var bestIoU = 0f
+        // ------------------------------------------------
+        // FIND IoU MATCH
+        // ------------------------------------------------
 
-        // Compare current faces
-        // with previous primary
+        var bestTrackingIndex =
+            -1
+
+        var bestIoU =
+            0f
+
         faces.forEachIndexed { index, face ->
 
             val iou =
                 calculateIoU(
+
                     previousRect,
+
                     face
                 )
 
-            if (iou > bestIoU) {
+            if (
+                iou > bestIoU
+            ) {
 
-                bestIoU = iou
-                bestTrackingIndex = index
+                bestIoU =
+                    iou
+
+                bestTrackingIndex =
+                    index
             }
         }
 
-        // Previous primary is still visible
+        // ------------------------------------------------
+        // PRIMARY STILL PRESENT
+        // ------------------------------------------------
+
         if (
             bestTrackingIndex >= 0 &&
             bestIoU > 0.25f
         ) {
 
-            primaryCandidateIndex = -1
-            primaryCandidateFrames = 0
+            primaryCandidateIndex =
+                -1
+
+            primaryCandidateFrames =
+                0
 
             previousPrimaryRect =
                 faces[bestTrackingIndex]
@@ -509,11 +926,17 @@ class MainActivity : ComponentActivity() {
             return bestTrackingIndex
         }
 
-        // Previous primary disappeared
+        // ------------------------------------------------
+        // PRIMARY DISAPPEARED
+        // ------------------------------------------------
+
         val newCandidate =
             calculateBestPrimary(
+
                 faces,
+
                 imageWidth,
+
                 imageHeight
             )
 
@@ -529,23 +952,31 @@ class MainActivity : ComponentActivity() {
             primaryCandidateIndex =
                 newCandidate
 
-            primaryCandidateFrames = 1
+            primaryCandidateFrames =
+                1
         }
 
-        // Wait for 5 frames
-        // before switching primary
-        if (primaryCandidateFrames >= 5) {
+        // ------------------------------------------------
+        // CONFIRM NEW PRIMARY
+        // ------------------------------------------------
+
+        if (
+            primaryCandidateFrames >= 5
+        ) {
 
             previousPrimaryRect =
                 faces[newCandidate]
 
-            primaryCandidateIndex = -1
-            primaryCandidateFrames = 0
+            primaryCandidateIndex =
+                -1
+
+            primaryCandidateFrames =
+                0
 
             return newCandidate
         }
 
-        // Do not immediately switch
+        // Don't immediately switch.
         return -1
     }
 
@@ -554,14 +985,25 @@ class MainActivity : ComponentActivity() {
     // ----------------------------------------------------
 
     private fun calculateBestPrimary(
+
         faces: List<Rect>,
+
         imageWidth: Int,
+
         imageHeight: Int
+
     ): Int {
 
-        if (faces.size == 1) {
+        if (
+            faces.size == 1
+        ) {
+
             return 0
         }
+
+        // ------------------------------------------------
+        // LARGEST FACE
+        // ------------------------------------------------
 
         val largestArea =
             faces.maxOf { face ->
@@ -569,6 +1011,10 @@ class MainActivity : ComponentActivity() {
                 face.width().toFloat() *
                         face.height().toFloat()
             }
+
+        // ------------------------------------------------
+        // CENTER
+        // ------------------------------------------------
 
         val centerX =
             imageWidth / 2f
@@ -578,18 +1024,22 @@ class MainActivity : ComponentActivity() {
 
         val maxDistance =
             sqrt(
+
                 centerX * centerX +
                         centerY * centerY
             )
 
-        var bestIndex = 0
-        var bestScore = -1f
+        var bestIndex =
+            0
+
+        var bestScore =
+            -1f
 
         faces.forEachIndexed { index, face ->
 
-            // ----------------------------------------
+            // ------------------------------------------------
             // SIZE SCORE
-            // ----------------------------------------
+            // ------------------------------------------------
 
             val area =
                 face.width().toFloat() *
@@ -597,11 +1047,14 @@ class MainActivity : ComponentActivity() {
 
             val sizeScore =
                 (area / largestArea)
-                    .coerceIn(0f, 1f)
+                    .coerceIn(
+                        0f,
+                        1f
+                    )
 
-            // ----------------------------------------
+            // ------------------------------------------------
             // CENTER SCORE
-            // ----------------------------------------
+            // ------------------------------------------------
 
             val faceCenterX =
                 face.centerX().toFloat()
@@ -621,20 +1074,28 @@ class MainActivity : ComponentActivity() {
 
             val centerScore =
                 (1f - distance / maxDistance)
-                    .coerceIn(0f, 1f)
+                    .coerceIn(
+                        0f,
+                        1f
+                    )
 
-            // ----------------------------------------
+            // ------------------------------------------------
             // FINAL SCORE
-            // ----------------------------------------
+            // ------------------------------------------------
 
             val score =
                 0.70f * sizeScore +
                         0.30f * centerScore
 
-            if (score > bestScore) {
+            if (
+                score > bestScore
+            ) {
 
-                bestScore = score
-                bestIndex = index
+                bestScore =
+                    score
+
+                bestIndex =
+                    index
             }
         }
 
@@ -642,12 +1103,15 @@ class MainActivity : ComponentActivity() {
     }
 
     // ----------------------------------------------------
-    // IOU TRACKING
+    // IoU
     // ----------------------------------------------------
 
     private fun calculateIoU(
+
         a: Rect,
+
         b: Rect
+
     ): Float {
 
         val left =
@@ -690,7 +1154,10 @@ class MainActivity : ComponentActivity() {
             intersectionWidth *
                     intersectionHeight
 
-        if (intersectionArea == 0) {
+        if (
+            intersectionArea == 0
+        ) {
+
             return 0f
         }
 
