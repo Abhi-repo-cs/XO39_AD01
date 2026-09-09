@@ -868,17 +868,13 @@ VisorX aims to answer three questions in real time:
 
 ---
 
-## 👥 Contributors
 
-Add project contributors here.
 
 ```text
-Your Team Name
-Smart India Hackathon / Academic Project
+team ctrl alt delete
+XO_code Hackathon / Academic Project
 ```
 
 ---
 
-## 📄 License
 
-Add your preferred open-source license here.
