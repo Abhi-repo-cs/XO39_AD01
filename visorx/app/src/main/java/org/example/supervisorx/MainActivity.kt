@@ -2,7 +2,7 @@ package org.example.supervisorx
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.graphics.Color
+import android.graphics.Rect
 import android.os.Bundle
 import android.widget.TextView
 import android.widget.Toast
@@ -23,6 +23,7 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var previewView: PreviewView
     private lateinit var faceCountText: TextView
+    private lateinit var faceOverlay: FaceOverlayView
 
     private val cameraPermissionLauncher =
         registerForActivityResult(
@@ -68,18 +69,36 @@ class MainActivity : ComponentActivity() {
 
         previewView = PreviewView(this)
 
+        faceOverlay = FaceOverlayView(this)
+
         faceCountText = TextView(this).apply {
             text = "Faces: 0"
             textSize = 24f
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.argb(150, 0, 0, 0))
+            setTextColor(android.graphics.Color.WHITE)
+            setBackgroundColor(
+                android.graphics.Color.argb(
+                    150,
+                    0,
+                    0,
+                    0
+                )
+            )
             setPadding(30, 20, 30, 20)
         }
 
-        val container = android.widget.FrameLayout(this)
+        val container =
+            android.widget.FrameLayout(this)
 
         container.addView(
             previewView,
+            android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        container.addView(
+            faceOverlay,
             android.widget.FrameLayout.LayoutParams(
                 android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
                 android.widget.FrameLayout.LayoutParams.MATCH_PARENT
@@ -95,7 +114,10 @@ class MainActivity : ComponentActivity() {
         textParams.leftMargin = 30
         textParams.topMargin = 50
 
-        container.addView(faceCountText, textParams)
+        container.addView(
+            faceCountText,
+            textParams
+        )
 
         setContentView(container)
     }
@@ -129,12 +151,13 @@ class MainActivity : ComponentActivity() {
             val cameraProvider =
                 cameraProviderFuture.get()
 
-            val preview = Preview.Builder()
-                .build()
-                .also {
-                    it.surfaceProvider =
-                        previewView.surfaceProvider
-                }
+            val preview =
+                Preview.Builder()
+                    .build()
+                    .also {
+                        it.surfaceProvider =
+                            previewView.surfaceProvider
+                    }
 
             val imageAnalyzer =
                 ImageAnalysis.Builder()
@@ -178,7 +201,9 @@ class MainActivity : ComponentActivity() {
         }, ContextCompat.getMainExecutor(this))
     }
 
-    private fun analyzeImage(imageProxy: ImageProxy) {
+    private fun analyzeImage(
+        imageProxy: ImageProxy
+    ) {
 
         val mediaImage = imageProxy.image
 
@@ -187,50 +212,46 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        val image = InputImage.fromMediaImage(
-            mediaImage,
-            imageProxy.imageInfo.rotationDegrees
-        )
+        val image =
+            InputImage.fromMediaImage(
+                mediaImage,
+                imageProxy.imageInfo.rotationDegrees
+            )
 
         faceDetector.process(image)
             .addOnSuccessListener { faces ->
 
-                if (faces.isEmpty()) {
-
-                    runOnUiThread {
-                        faceCountText.text = "Faces: 0"
+                val faceRects =
+                    faces.map { face ->
+                        Rect(face.boundingBox)
                     }
-
-                    return@addOnSuccessListener
-                }
-
-                // Find the largest detected face.
-                val primaryFace = faces.maxByOrNull { face ->
-
-                    val width = face.boundingBox.width()
-                    val height = face.boundingBox.height()
-
-                    width * height
-                }
 
                 val primaryIndex =
-                    if (primaryFace != null) {
-                        faces.indexOf(primaryFace) + 1
-                    } else {
-                        -1
-                    }
+                    faces.indices.maxByOrNull { index ->
+
+                        val rect =
+                            faces[index].boundingBox
+
+                        rect.width() * rect.height()
+
+                    } ?: -1
 
                 runOnUiThread {
 
                     faceCountText.text =
-                        "Faces: ${faces.size}\n" +
-                                "Primary: Face $primaryIndex"
+                        "Faces: ${faces.size}"
+
+                    faceOverlay.updateFaces(
+                        faceRects,
+                        primaryIndex
+                    )
                 }
             }
             .addOnFailureListener {
 
                 runOnUiThread {
-                    faceCountText.text = "Detection error"
+                    faceCountText.text =
+                        "Detection error"
                 }
             }
             .addOnCompleteListener {
@@ -240,6 +261,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+
         super.onDestroy()
 
         faceDetector.close()
