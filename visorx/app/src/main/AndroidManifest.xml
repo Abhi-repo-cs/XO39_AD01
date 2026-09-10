@@ -3,11 +3,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
             android:allowBackup="true"
             android:label="VisorX"
             android:supportsRtl="true">
+
+
 
         <activity
                 android:name=".MainActivity"
@@ -19,6 +24,12 @@
             </intent-filter>
 
         </activity>
+
+        <service
+                android:name=".VisorXProtectionService"
+                android:enabled="true"
+                android:exported="false"
+                android:foregroundServiceType="camera" />
 
     </application>
 
